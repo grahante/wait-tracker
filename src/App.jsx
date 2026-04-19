@@ -252,8 +252,9 @@ function buildInsights(sorted,lf,doses){
   if(lfVals.length>=5){
     const wkDays=lfVals.filter(l=>l.exercise==="workout").length;
     const walkDays=lfVals.filter(l=>l.exercise==="walk").length;
-    const total=lfVals.filter(l=>l.exercise).length;
-    if(total>=MIN)ins.push({e:"🏃",t:"Exercise frequency",tag:"lifestyle",txt:`You've exercised on ${Math.round(total/lfVals.length*100)}% of logged days — ${wkDays} workouts and ${walkDays} walks out of ${lfVals.length} entries.`});
+    const total=lfVals.filter(l=>l.exercise==="workout"||l.exercise==="walk").length;
+    const withExercise=lfVals.filter(l=>l.exercise==="workout"||l.exercise==="walk"||l.exercise==="none"||l.exercise===null);
+    if(total>=MIN&&withExercise.length>=MIN)ins.push({e:"🏃",t:"Exercise frequency",tag:"lifestyle",txt:`You've exercised on ${Math.round(total/withExercise.length*100)}% of logged days — ${wkDays} workouts and ${walkDays} walks out of ${withExercise.length} entries with exercise data.`});
   }
 
   // Beta & weight
@@ -312,6 +313,37 @@ function buildInsights(sorted,lf,doses){
   // Clean days
   const cleanD=ndd(l=>!l.drank&&!l.delivery&&!l.red_meat&&!l.high_sugar&&l.drank!==undefined);
   if(cleanD.length>=MIN)ins.push({e:"🥗",t:"Clean day effect",tag:"habits",txt:`On clean days (no drinking, delivery, red meat, or sugar): avg ${avg(cleanD)<0?`${Math.abs(avg(cleanD)).toFixed(2)} lbs down`:`+${avg(cleanD).toFixed(2)} lbs`} the next morning.`});
+
+  // Snooze insights
+  const snoozeD=ndd(l=>l.snoozed===true),noSnoozeD=ndd(l=>l.snoozed===false);
+  if(snoozeD.length>=MIN&&noSnoozeD.length>=MIN){
+    const diff=avg(snoozeD)-avg(noSnoozeD);
+    ins.push({e:"⏰",t:"Snooze & next-day weight",tag:"sleep",txt:diff>0?`On days you snooze, you weigh ${diff.toFixed(2)} lbs more than non-snooze mornings. Disrupted sleep cycles?`:`Snoozing doesn't seem to affect your weight. Good news for lazy mornings.`});
+  }
+  if(lfVals.length>=5){
+    const snoozeDays=lfVals.filter(l=>l.snoozed===true);
+    const noSnoozeDays=lfVals.filter(l=>l.snoozed===false);
+    // Snooze after drinking
+    if(snoozeDays.length>=MIN&&noSnoozeDays.length>=MIN){
+      const snoozeRate=Math.round(snoozeDays.length/(snoozeDays.length+noSnoozeDays.length)*100);
+      ins.push({e:"😴",t:"Snooze frequency",tag:"lifestyle",txt:`You snooze on ${snoozeRate}% of logged mornings — ${snoozeDays.length} out of ${snoozeDays.length+noSnoozeDays.length} days.`});
+      // Do you snooze more after drinking?
+      const drinkSnooze=lfVals.filter(l=>l.drank&&l.snoozed!==undefined);
+      const soberSnooze=lfVals.filter(l=>!l.drank&&l.snoozed!==undefined&&l.drank!==undefined);
+      if(drinkSnooze.length>=MIN&&soberSnooze.length>=MIN){
+        const dPct=Math.round(drinkSnooze.filter(l=>l.snoozed).length/drinkSnooze.length*100);
+        const sPct=Math.round(soberSnooze.filter(l=>l.snoozed).length/soberSnooze.length*100);
+        if(Math.abs(dPct-sPct)>=10)ins.push({e:"🍺⏰",t:"Drinking & snoozing",tag:"sleep",txt:dPct>sPct?`You snooze ${dPct-sPct}% more after drinking nights than sober ones. Alcohol disrupts your morning.`:`Surprisingly, you snooze ${sPct-dPct}% less after drinking. Early riser either way.`});
+      }
+      // Snooze after poor sleep
+      const poorSleepSnooze=[],goodSleepSnooze=[];
+      lfVals.forEach(l=>{const hrs=sleepHrs(l.bed_time,l.wake_time);if(hrs===null||l.snoozed===undefined)return;if(hrs<6.5)poorSleepSnooze.push(l.snoozed?1:0);else goodSleepSnooze.push(l.snoozed?1:0);});
+      if(poorSleepSnooze.length>=MIN&&goodSleepSnooze.length>=MIN){
+        const poorPct=Math.round(avg(poorSleepSnooze)*100),goodPct=Math.round(avg(goodSleepSnooze)*100);
+        if(Math.abs(poorPct-goodPct)>=10)ins.push({e:"💤⏰",t:"Poor sleep & snoozing",tag:"sleep",txt:poorPct>goodPct?`After short nights (<6.5hrs) you snooze ${poorPct-goodPct}% more often. Body trying to catch up.`:`You actually snooze less after short nights. Adrenaline kicking in.`});
+      }
+    }
+  }
 
   // ── SLEEP ─────────────────────────────────────────────────────────────────
   const sleepData=[];
@@ -543,6 +575,7 @@ export default function App(){
   const[rosacea,setRosacea]=useState(0);
   const[firstWord,setFirstWord]=useState("");
   const[firstNumber,setFirstNumber]=useState("");
+  const[snoozed,setSnoozed]=useState(false);
   const[msg,setMsg]=useState("");
 
   // Load Supabase data
@@ -649,12 +682,12 @@ export default function App(){
     const padresWin=padresResult?padresResult.won:null;
     const lfRow={date:dt,drank,red_meat:redMeat,delivery,high_sugar:highSugar,exercise,beta,meals:isNaN(mc)?null:mc,
       bed_time:bedTime||null,wake_time:wakeTime||null,night_wake:nightWake,rosacea:rosacea||null,
-      first_word:firstWord.trim()||null,first_number:isNaN(fn)?null:fn,padres_win:padresWin};
+      first_word:firstWord.trim()||null,first_number:isNaN(fn)?null:fn,padres_win:padresWin,snoozed};
     await sbUpsert("lifestyle",[lfRow]);
     setLf(prev=>({...prev,[dt]:lfRow}));
     setWt("");setDoseInp("");setDrank(false);setRedMeat(false);setDelivery(false);setHighSugar(false);
     setExercise("none");setBeta(false);setMeals("");setBedTime("");setWakeTime("");setNightWake(false);
-    setRosacea(0);setFirstWord("");setFirstNumber("");setDt(todayStr());
+    setRosacea(0);setFirstWord("");setFirstNumber("");setSnoozed(false);setDt(todayStr());
     setSyncing(false);setMsg("Saved ✓");setTimeout(()=>setMsg(""),2000);
   }
 
@@ -965,31 +998,27 @@ export default function App(){
                   style={{fontSize:28,fontWeight:700,textAlign:"center",padding:"12px 16px"}}/>
               </div>
 
-              {/* Date + Dose */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-                <div>
-                  <div style={LS}>Date</div>
-                  <input className="inp" type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
-                </div>
-                <div>
-                  <div style={LS}>Dose mg <span style={{color:C.dim,fontWeight:400,textTransform:"none"}}>(opt)</span></div>
-                  <input className="inp" type="number" step="0.25" placeholder="5.5" value={doseInp} onChange={e=>setDoseInp(e.target.value)}/>
-                </div>
+              {/* Date — full width */}
+              <div style={{marginBottom:10}}>
+                <div style={LS}>Date</div>
+                <input className="inp" type="date" value={dt} onChange={e=>setDt(e.target.value)}/>
               </div>
 
-              {/* First word + number */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-                <div>
-                  <div style={LS}>First word that comes to mind</div>
-                  <input className="inp" type="text" placeholder="e.g. calm" maxLength={20} value={firstWord} onChange={e=>setFirstWord(e.target.value.split(" ")[0])}/>
-                </div>
-                <div>
-                  <div style={LS}>First number that comes to mind</div>
-                  <input className="inp" type="number" placeholder="e.g. 7" value={firstNumber} onChange={e=>setFirstNumber(e.target.value)} style={{textAlign:"center",fontSize:18,fontWeight:600}}/>
-                </div>
+              {/* Dose — full width */}
+              <div style={{marginBottom:14}}>
+                <div style={LS}>Dose mg <span style={{color:C.dim,fontWeight:400,textTransform:"none"}}>(optional)</span></div>
+                <input className="inp" type="number" step="0.25" placeholder="" value={doseInp} onChange={e=>setDoseInp(e.target.value)}/>
               </div>
 
-              <button className="btn" onClick={addEntry} style={{width:"100%",marginBottom:20}}>{syncing?"Saving…":"Save Entry"}</button>
+              {/* First word + number — stacked */}
+              <div style={{marginBottom:10}}>
+                <div style={LS}>First word that comes to mind</div>
+                <input className="inp" type="text" placeholder="" maxLength={20} value={firstWord} onChange={e=>setFirstWord(e.target.value.split(" ")[0])}/>
+              </div>
+              <div style={{marginBottom:20}}>
+                <div style={LS}>First number that comes to mind</div>
+                <input className="inp" type="number" placeholder="" value={firstNumber} onChange={e=>setFirstNumber(e.target.value)} style={{textAlign:"center",fontSize:18,fontWeight:600}}/>
+              </div>
 
               {/* Habits */}
               <div style={{borderTop:`1px solid ${C.border}`,paddingTop:16,marginBottom:16}}>
@@ -1023,10 +1052,18 @@ export default function App(){
                   </div>
                 </div>
 
-                {/* Meals */}
+                {/* Meals — tap to select 1, 2, 3 */}
                 <div style={{marginTop:12}}>
                   <div style={LS}>Meals eaten</div>
-                  <input className="inp" type="number" min="1" max="8" step="1" placeholder="3" value={meals} onChange={e=>setMeals(e.target.value)} style={{textAlign:"center",fontSize:16,fontWeight:600}}/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                    {["1","2","3"].map(n=>(
+                      <button key={n} onClick={()=>setMeals(meals===n?"":n)} style={{
+                        padding:"10px 8px",borderRadius:9,border:`1.5px solid ${meals===n?C.accent:C.border}`,
+                        background:meals===n?"#1e2a45":C.card2,color:meals===n?C.text:C.muted,
+                        fontFamily:"inherit",fontSize:16,fontWeight:meals===n?700:400,transition:"all .15s"
+                      }}>{n}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1036,20 +1073,34 @@ export default function App(){
                   Last night's sleep
                   {sleepCalc!==null&&<span style={{color:C.green,fontWeight:600,textTransform:"none",marginLeft:8,fontSize:12}}>{sleepCalc} hrs</span>}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <div><div style={LS}>Bed time</div><input className="inp" type="time" value={bedTime} onChange={e=>setBedTime(e.target.value)} style={{textAlign:"center"}}/></div>
-                  <div><div style={LS}>Wake up time</div><input className="inp" type="time" value={wakeTime} onChange={e=>setWakeTime(e.target.value)} style={{textAlign:"center"}}/></div>
+                {/* Bed time — full width */}
+                <div style={{marginBottom:10}}>
+                  <div style={LS}>Bed time</div>
+                  <input className="inp" type="time" value={bedTime} onChange={e=>setBedTime(e.target.value)} style={{textAlign:"center"}}/>
                 </div>
-                <button onClick={()=>setNightWake(!nightWake)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:nightWake?"#1e2a45":C.card2,border:`1px solid ${nightWake?C.accent:C.border}`,borderRadius:9,padding:"11px 14px",cursor:"pointer",transition:"all .15s",width:"100%"}}>
-                  <span style={{fontSize:14,color:nightWake?C.text:C.muted,fontFamily:"inherit",fontWeight:500}}><span style={{marginRight:8}}>😴</span>Woke up during the night</span>
+                {/* Wake time — full width */}
+                <div style={{marginBottom:10}}>
+                  <div style={LS}>Wake up time</div>
+                  <input className="inp" type="time" value={wakeTime} onChange={e=>setWakeTime(e.target.value)} style={{textAlign:"center"}}/>
+                </div>
+                {/* Night wake toggle */}
+                <button onClick={()=>setNightWake(!nightWake)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:nightWake?"#1e2a45":C.card2,border:`1px solid ${nightWake?C.accent:C.border}`,borderRadius:9,padding:"11px 14px",cursor:"pointer",transition:"all .15s",width:"100%",marginBottom:8}}>
+                  <span style={{fontSize:14,color:nightWake?C.text:C.muted,fontFamily:"inherit",fontWeight:500}}><span style={{marginRight:8}}>🌙</span>Woke up during the night</span>
                   <div style={{width:38,height:22,borderRadius:11,background:nightWake?C.accent:C.border2,position:"relative",transition:"background .15s",flexShrink:0}}>
                     <div style={{position:"absolute",top:3,left:nightWake?17:3,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .15s",boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
+                  </div>
+                </button>
+                {/* Snooze toggle — this morning */}
+                <button onClick={()=>setSnoozed(!snoozed)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:snoozed?"#1e2a45":C.card2,border:`1px solid ${snoozed?C.accent:C.border}`,borderRadius:9,padding:"11px 14px",cursor:"pointer",transition:"all .15s",width:"100%"}}>
+                  <span style={{fontSize:14,color:snoozed?C.text:C.muted,fontFamily:"inherit",fontWeight:500}}><span style={{marginRight:8}}>⏰</span>Snoozed this morning</span>
+                  <div style={{width:38,height:22,borderRadius:11,background:snoozed?C.accent:C.border2,position:"relative",transition:"background .15s",flexShrink:0}}>
+                    <div style={{position:"absolute",top:3,left:snoozed?17:3,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .15s",boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
                   </div>
                 </button>
               </div>
 
               {/* Rosacea */}
-              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:16}}>
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:16,marginBottom:20}}>
                 <div style={{...LS,marginBottom:10}}>Rosacea today <span style={{color:C.dim,fontWeight:400,textTransform:"none",marginLeft:4}}>1 = clear · 10 = very red</span></div>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                   {[1,2,3,4,5,6,7,8,9,10].map(n=>(
@@ -1059,6 +1110,8 @@ export default function App(){
                 {rosacea>0&&<div style={{marginTop:8,fontSize:12,color:rosacea<=3?C.green:rosacea<=6?C.yellow:C.red}}>{rosacea<=3?"Clear day 🌿":rosacea<=6?"Moderate 🌹":"Elevated 🔴"}</div>}
               </div>
 
+              {/* Save button at bottom */}
+              <button className="btn" onClick={addEntry} style={{width:"100%"}}>{syncing?"Saving…":"Save Entry"}</button>
               {msg&&<div style={{marginTop:14,fontSize:13,color:C.green,fontWeight:500}}>{msg}</div>}
             </div>
 
